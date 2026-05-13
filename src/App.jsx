@@ -2,12 +2,19 @@ import { useState, useEffect } from 'react'
 import Dashboard from './components/Dashboard'
 import TransactionList from './components/TransactionList'
 import TransactionForm from './components/TransactionForm'
-import { loadTransactions, saveTransactions } from './utils/storage'
+import {
+  fetchTransactions,
+  createTransaction,
+  updateTransaction,
+  deleteTransaction,
+} from './utils/api'
 
 const now = new Date()
 
 export default function App() {
-  const [transactions, setTransactions] = useState(loadTransactions)
+  const [transactions, setTransactions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [showForm, setShowForm] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState(null)
   const [filter, setFilter] = useState({
@@ -17,23 +24,43 @@ export default function App() {
   })
 
   useEffect(() => {
-    saveTransactions(transactions)
-  }, [transactions])
+    fetchTransactions()
+      .then(setTransactions)
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [])
 
-  const addTransaction = (data) => {
-    setTransactions(prev => [...prev, { ...data, id: crypto.randomUUID() }])
-    setShowForm(false)
+  const handleAdd = async (data) => {
+    try {
+      const { id, ...payload } = data
+      const created = await createTransaction(payload)
+      setTransactions(prev => [...prev, created])
+      setShowForm(false)
+    } catch (err) {
+      alert('Erro ao salvar: ' + err.message)
+    }
   }
 
-  const updateTransaction = (data) => {
-    setTransactions(prev => prev.map(t => (t.id === data.id ? data : t)))
-    setEditingTransaction(null)
-    setShowForm(false)
+  const handleUpdate = async (data) => {
+    try {
+      const { id, ...payload } = data
+      const updated = await updateTransaction(id, payload)
+      setTransactions(prev => prev.map(t => (t.id === id ? updated : t)))
+      setEditingTransaction(null)
+      setShowForm(false)
+    } catch (err) {
+      alert('Erro ao atualizar: ' + err.message)
+    }
   }
 
-  const deleteTransaction = (id) => {
+  const handleDelete = async (id) => {
     if (!window.confirm('Deseja excluir esta transacao?')) return
-    setTransactions(prev => prev.filter(t => t.id !== id))
+    try {
+      await deleteTransaction(id)
+      setTransactions(prev => prev.filter(t => t.id !== id))
+    } catch (err) {
+      alert('Erro ao excluir: ' + err.message)
+    }
   }
 
   const handleEdit = (transaction) => {
@@ -46,33 +73,31 @@ export default function App() {
     setEditingTransaction(null)
   }
 
-  // Transactions for the selected month
   const monthTransactions = transactions.filter(t => {
     const [y, m] = t.date.split('-').map(Number)
     return m === filter.month && y === filter.year
   })
 
-  // Apply type filter on top of month filter
   const filteredTransactions =
     filter.type === 'all'
       ? monthTransactions
       : monthTransactions.filter(t => t.type === filter.type)
 
-  // Sort by date descending (ISO string comparison works for YYYY-MM-DD)
   const sortedTransactions = [...filteredTransactions].sort((a, b) =>
     b.date.localeCompare(a.date)
   )
 
   const monthIncome = monthTransactions
     .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0)
+    .reduce((sum, t) => sum + Number(t.amount), 0)
 
   const monthExpense = monthTransactions
     .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amount, 0)
+    .reduce((sum, t) => sum + Number(t.amount), 0)
 
   const balance = transactions.reduce(
-    (sum, t) => (t.type === 'income' ? sum + t.amount : sum - t.amount),
+    (sum, t) =>
+      t.type === 'income' ? sum + Number(t.amount) : sum - Number(t.amount),
     0
   )
 
@@ -94,26 +119,39 @@ export default function App() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-5 pb-10">
-        <Dashboard
-          balance={balance}
-          monthIncome={monthIncome}
-          monthExpense={monthExpense}
-          month={filter.month}
-          year={filter.year}
-        />
-        <TransactionList
-          transactions={sortedTransactions}
-          filter={filter}
-          setFilter={setFilter}
-          onEdit={handleEdit}
-          onDelete={deleteTransaction}
-        />
+        {error ? (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+            <p className="font-semibold">Erro ao conectar com o banco de dados</p>
+            <p className="mt-1 text-xs">{error}</p>
+          </div>
+        ) : loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+          </div>
+        ) : (
+          <>
+            <Dashboard
+              balance={balance}
+              monthIncome={monthIncome}
+              monthExpense={monthExpense}
+              month={filter.month}
+              year={filter.year}
+            />
+            <TransactionList
+              transactions={sortedTransactions}
+              filter={filter}
+              setFilter={setFilter}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+            />
+          </>
+        )}
       </main>
 
       {showForm && (
         <TransactionForm
           transaction={editingTransaction}
-          onSubmit={editingTransaction ? updateTransaction : addTransaction}
+          onSubmit={editingTransaction ? handleUpdate : handleAdd}
           onClose={handleCloseForm}
         />
       )}
